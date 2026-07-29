@@ -1,6 +1,6 @@
-# Sales Forecasting Project
+# Retail Demand Forecasting
 
-> **End-to-end retail demand forecasting** built during an ML internship: integrating sales, store attributes, public holidays, and Open-Meteo weather into **store-level 3-week forecasts** using a multi-input LSTM with categorical embeddings, benchmarked against XGBoost, LightGBM, and feed-forward networks.
+> **End-to-end retail demand forecasting** built during an ML internship: integrating sales, store attributes, public holidays, and Open-Meteo weather into **store-level forecasts** using a multi-input LSTM with categorical embeddings, benchmarked against XGBoost, LightGBM, and feed-forward networks.
 
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![TensorFlow](https://img.shields.io/badge/TensorFlow-2.15-lightgrey)
@@ -17,8 +17,9 @@
 3. [What I Built & Learned](#what-i-built--learned)
 4. [Techniques & Tooling](#techniques--tooling)
 5. [The Modelling Pipeline](#the-modelling-pipeline)
-6. [Key Decisions & Lessons](#key-decisions--lessons)
-7. [Reproducibility & Data Access](#reproducibility--data-access)
+6. [Results](#results)
+7. [Key Decisions & Lessons](#key-decisions--lessons)
+8. [Reproducibility & Data Access](#reproducibility--data-access)
 
 ---
 
@@ -37,7 +38,7 @@ The repository is organised so that each folder maps to one stage of that pipeli
 The repo is split into four folders, each representing a stage of the workflow. Within each folder, notebooks are named to describe exactly what they do.
 
 ```
-Sales-Forecasting-Project/
+retail-demand-forecasting/
 ├── data/            # Stage 1 — building the modelling dataset
 ├── notebooks/       # Stage 2 — exploratory studies + the flagship LSTM
 ├── experiments/     # Stage 3 — hyperparameter tuning & architecture variants
@@ -67,7 +68,7 @@ The core analysis. Naming convention: exploratory studies are `<Daily/Hourly> Sa
 | `Hourly Sales Weather Study.ipynb` | Hour-by-hour study. Expands each store into its operating hours, joins hourly sales and weather, runs a correlation analysis, then benchmarks **Linear / Ridge / Lasso / ElasticNet** and **XGBoost** (with GridSearch tuning and feature-importance checks) on hourly net amount and transaction count. |
 | `Daily Sales Weather Study.ipynb` | Daily-level counterpart. Collapses hourly sales to daily totals, applies **SMOTE** to address class imbalance, merges with weather, and benchmarks **XGBoost** (draft + GridSearch) and an **MLP** (scikit-learn and TensorFlow versions) for daily net amount and TC. |
 | `Daily Sales Supervised ML.ipynb` | The fuller supervised sweep on the de-duplicated daily data. Runs **Polynomial Regression**, **XGBoost**, **LightGBM** (four progressive feature-drop drafts), and a **Feed-Forward NN with entity embeddings** and two task-specific heads — comparing MAE/RMSE/R² across all. |
-| `LSTM Final Model.ipynb` | **Flagship.** Multi-input LSTM: categorical **embeddings** + a static-context **MLP** broadcast across timesteps, on a 14-day window with a time-aware split. Trains on both targets, reports MAE/RMSE/R², produces 200-step autoregressive forecasts with **95% confidence bands**, and saves the model to `model/`. |
+| `LSTM Final Model.ipynb` | **Flagship.** Multi-input LSTM: categorical **embeddings** + a residual static-context **MLP** broadcast across timesteps, on a 14-day window with a time-aware split. Trains on both targets, reports MAE/RMSE/R², and produces per-store forecasts — a **21-day (3-week) dashboard** for practical use plus a **200-step autoregressive demo** with **95% confidence bands** to illustrate error growth. Saves the model to `model/`. |
 | `Running LSTM Without Retraining.ipynb` | **Inference only.** Loads `model/Sales_Forecasting_LSTM_Model_Final.h5` and generates forecasts without retraining — the "handoff" notebook showing how the saved model is used in practice. |
 
 ### `experiments/` — Tuning & variants
@@ -100,7 +101,7 @@ A documented log of what was tried while developing the LSTM — including appro
 - **Exploration (daily & hourly)** — Quantified sales–weather relationships, handled class imbalance, and concluded that **weather alone is insufficient** to explain sales variance.
 - **Supervised baselines & tuning** — Trained Polynomial/Linear models, XGBoost, LightGBM, and a Feed-Forward NN; used `GridSearchCV`, regularisation (`ReduceLROnPlateau`, `EarlyStopping`), and importance-guided feature pruning.
 - **Sequence feature design** — Partitioned features into time-varying categoricals, static categoricals (entity embeddings), and continuous; applied `StandardScaler`; engineered a 14-day input window with a time-aware train/validation split.
-- **LSTM forecasting (flagship)** — LSTM + 2-layer MLP for static context; 200-step autoregressive forecasts; tracked MAE/RMSE/R²; delivered store-level 3-week forecasts with interactive Plotly + ipywidgets dashboards.
+- **LSTM forecasting (flagship)** — LSTM + residual 2-layer MLP for static context; per-store forecasts via a 21-day dashboard plus a 200-step autoregressive demo; tracked MAE/RMSE/R²; delivered with interactive Plotly + ipywidgets dashboards.
 - **Experiment discipline** — Optuna HPO, categorical-as-numeric trials, importance-guided column removals, tiled static embeddings, and static-initialised LSTM state — documented when they **did not** beat the tuned baseline.
 - **Inference & handoff** — Saved a deployable Keras model and an inference-only notebook to generate forecasts without retraining.
 
@@ -125,7 +126,40 @@ The flagship LSTM uses a hybrid input design:
 - **Binary flags** (`Rain?`, `Puasa`, `Public Holiday`) — mapped to 0/1
 - **Numeric** (`Net_Amount`, `TC`, `Days_after_Opening`, `Average Daily Temperature`) — min-max scaled
 
-A **time-aware split per store** avoids leakage across dates. The model outputs both `Net_Amount` and `TC`, tracked with MAE / RMSE / R², and supports a 200-step autoregressive forecast with an optional 21-day per-store interactive dashboard.
+A **time-aware split per store** (first 80% of each store's timeline for training) avoids leakage across dates. The model outputs both `Net_Amount` and `TC`, tracked with MAE / RMSE / R² (reported against qualitative bands — Excellent / Good / Okay / Poor, scaled to each target's mean and standard deviation), and supports a 200-step autoregressive forecast with an optional 21-day per-store interactive dashboard.
+
+**LSTM configuration used:**
+
+| Parameter | Value |
+| --- | --- |
+| Look-back window | 14 days |
+| LSTM units | 64 |
+| Static-context MLP width | 128 |
+| Dropout | 0.25 |
+| Learning rate | 1e-3 (Adam) |
+| Callbacks | EarlyStopping, ReduceLROnPlateau |
+
+**Benchmark models (in `notebooks/`):**
+
+- **XGBoost** — 3-fold GridSearch over `max_depth`, `learning_rate`, `n_estimators`, `subsample`, `colsample_bytree`; separate models per target.
+- **LightGBM** — four progressive drafts to test feature dependence: (1) full feature set, (2) high-cardinality columns cast to categorical dtype, (3) drop `Store_No`, (4) additionally drop `Rain?`, `Days From Holiday`, `Puasa Count`.
+- **Feed-Forward NN** — shared embedding tower for categoricals + numeric branch → dense trunk (128-64-32, ReLU, BatchNorm, Dropout 0.3) → two task-specific heads; Adam (5e-4), EarlyStopping.
+- **Linear family** — Linear / Ridge / Lasso / ElasticNet baselines (hourly study), with an optional temperature×hour interaction term.
+
+---
+
+## Results
+
+**Flagship LSTM** (held-out test set, both targets):
+
+| Target | R² | MAE (% of mean) | RMSE (÷ std) |
+| --- | --- | --- | --- |
+| Net Amount | **0.911** | 671 (9% of mean) | 995 (0.30σ) |
+| Transaction Count | **0.939** | 39 (8% of mean) | 62 (0.25σ) |
+
+Both targets scored in the "Excellent" band on all three metrics (R² ≥ 0.90, MAE < 10% of mean, RMSE < 0.5σ).
+
+**Weather is a weak standalone signal.** Exploratory correlation confirmed why multi-modal inputs were necessary: daily net amount vs temperature showed a Pearson correlation of just **0.007**, and transaction count vs temperature **0.062** — near zero. This finding drove the decision to combine weather with store, calendar, and holiday features rather than relying on weather alone.
 
 ---
 
@@ -137,7 +171,7 @@ A **time-aware split per store** avoids leakage across dates. The model outputs 
 - **Permutation Feature Importance should steer selective feature removal**, not broad elimination.
 - **Treat categoricals as embeddings (static) and flags (time-varying)**; keep numerics standardised; avoid aggregates computed beyond the prediction cutoff.
 - **Communicate uncertainty** — 200-step autoregression shows error growth, so shorter horizons or prediction bands are preferable for decisions.
-- **Simple, interactive visualisations** (store-level 3-week outlook, errors, importance) drove stakeholder adoption more than raw metrics.
+- **Simple, interactive visualisations** (store-level forecast dashboard, errors, importance) drove stakeholder adoption more than raw metrics.
 
 ---
 

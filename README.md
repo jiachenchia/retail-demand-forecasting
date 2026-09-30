@@ -66,9 +66,9 @@ The core analysis. Naming convention: exploratory studies are `<Daily/Hourly> Sa
 | Notebook | What it does |
 | --- | --- |
 | `Hourly Sales Weather Study.ipynb` | Hour-by-hour study. Expands each store into its operating hours, joins hourly sales and weather, runs a correlation analysis, then benchmarks **Linear / Ridge / Lasso / ElasticNet** and **XGBoost** (with GridSearch tuning and feature-importance checks) on hourly net amount and transaction count. |
-| `Daily Sales Weather Study.ipynb` | Daily-level counterpart. Collapses hourly sales to daily totals, applies **SMOTE** to address class imbalance, merges with weather, and benchmarks **XGBoost** (draft + GridSearch) and an **MLP** (scikit-learn and TensorFlow versions) for daily net amount and TC. |
+| `Daily Sales Weather Study.ipynb` | Daily-level counterpart. Collapses hourly sales to daily totals, merges with weather, applies **SMOTE** to balance rain vs. no-rain days (about 13:1) in the training data, and benchmarks **XGBoost** (draft + GridSearch) and an **MLP** (scikit-learn and TensorFlow versions) for daily net amount and TC. |
 | `Daily Sales Supervised ML.ipynb` | The fuller supervised sweep on the de-duplicated daily data. Runs **Polynomial Regression**, **XGBoost**, **LightGBM** (four progressive feature-drop drafts), and a **Feed-Forward NN with entity embeddings** and two task-specific heads — comparing MAE/RMSE/R² across all. |
-| `LSTM Final Model.ipynb` | **Flagship.** Multi-input LSTM: categorical **embeddings** + a residual static-context **MLP** broadcast across timesteps, on a 14-day window with a time-aware split. Trains on both targets, reports MAE/RMSE/R², and produces per-store forecasts — a **21-day (3-week) dashboard** for practical use plus a **200-step autoregressive demo** with **95% confidence bands** to illustrate error growth. Saves the model to `model/`. |
+| `LSTM Final Model.ipynb` | **Flagship.** Multi-input LSTM: categorical **embeddings** + a residual static-context **MLP** broadcast across timesteps, on a 14-day window with a time-aware split. Trains on both targets, reports MAE/RMSE/R², and produces per-store forecasts — a **21-day (3-week) dashboard** for practical use plus a **200-step autoregressive demo** with **95% prediction intervals** to illustrate error growth. Saves the model to `model/`. |
 | `Running LSTM Without Retraining.ipynb` | **Inference only.** Loads `model/Sales_Forecasting_LSTM_Model_Final.h5` and generates forecasts without retraining — the "handoff" notebook showing how the saved model is used in practice. |
 
 ### `experiments/` — Tuning & variants
@@ -100,7 +100,7 @@ A documented log of what was tried while developing the LSTM — including appro
 - **Reproducible external data** — Implemented an Open-Meteo pipeline with on-disk caching and retries; mapped WMO weather codes to readable labels; generated timezone-aware per-store hourly series.
 - **Exploration (daily & hourly)** — Quantified sales–weather relationships, handled class imbalance, and concluded that **weather alone is insufficient** to explain sales variance.
 - **Supervised baselines & tuning** — Trained Polynomial/Linear models, XGBoost, LightGBM, and a Feed-Forward NN; used `GridSearchCV`, regularisation (`ReduceLROnPlateau`, `EarlyStopping`), and importance-guided feature pruning.
-- **Sequence feature design** — Partitioned features into time-varying categoricals, static categoricals (entity embeddings), and continuous; applied `StandardScaler`; engineered a 14-day input window with a time-aware train/validation split.
+- **Sequence feature design** — Partitioned features into time-varying categoricals, static categoricals (entity embeddings), and continuous; applied `MinMaxScaler`; engineered a 14-day input window with a time-aware train/validation split.
 - **LSTM forecasting (flagship)** — LSTM + residual 2-layer MLP for static context; per-store forecasts via a 21-day dashboard plus a 200-step autoregressive demo; tracked MAE/RMSE/R²; delivered with interactive Plotly + ipywidgets dashboards.
 - **Experiment discipline** — Optuna HPO, categorical-as-numeric trials, importance-guided column removals, tiled static embeddings, and static-initialised LSTM state — documented when they **did not** beat the tuned baseline.
 - **Inference & handoff** — Saved a deployable Keras model and an inference-only notebook to generate forecasts without retraining.
@@ -150,7 +150,7 @@ A **time-aware split per store** (first 80% of each store's timeline for trainin
 
 ## Results
 
-**Flagship LSTM** (held-out test set, both targets):
+**Flagship LSTM** (a final 15% period of each store's timeline, both targets):
 
 | Target | R² | MAE (% of mean) | RMSE (÷ std) |
 | --- | --- | --- | --- |
@@ -159,6 +159,8 @@ A **time-aware split per store** (first 80% of each store's timeline for trainin
 
 Both targets scored in the "Excellent" band on all three metrics (R² ≥ 0.90, MAE < 10% of mean, RMSE < 0.5σ).
 
+**Note on comparability.** The baseline models used a random train/test split and had no access to sales history, so their scores are not directly comparable with the LSTM's, which was evaluated on a held-out final 15% of each store's timeline using past sales as input.
+
 **Weather is a weak standalone signal.** Exploratory correlation confirmed why multi-modal inputs were necessary: daily net amount vs temperature showed a Pearson correlation of just **0.007**, and transaction count vs temperature **0.062** — near zero. This finding drove the decision to combine weather with store, calendar, and holiday features rather than relying on weather alone.
 
 ---
@@ -166,12 +168,12 @@ Both targets scored in the "Excellent" band on all three metrics (R² ≥ 0.90, 
 ## Key Decisions & Lessons
 
 - **Standalone predictors seldom dominate the signal** — robust performance depended on multi-modal inputs; weather alone was not enough.
-- **Use time-aware splits per store** for time-series modelling; random splits inflate scores via leakage.
+- **Use time-aware splits per store** for time-series modelling; random splits inflate scores via leakage. The early baselines used random splits, so their scores aren't directly comparable with the LSTM's.
 - **Compact, focused hyperparameter searches** with learning-rate scheduling and early stopping reached good results faster than broad Optuna sweeps.
 - **Permutation Feature Importance should steer selective feature removal**, not broad elimination.
 - **Treat categoricals as embeddings (static) and flags (time-varying)**; keep numerics standardised; avoid aggregates computed beyond the prediction cutoff.
 - **Communicate uncertainty** — 200-step autoregression shows error growth, so shorter horizons or prediction bands are preferable for decisions.
-- **Simple, interactive visualisations** (store-level forecast dashboard, errors, importance) drove stakeholder adoption more than raw metrics.
+- **Simple, interactive visualisations** (store-level forecast dashboard, errors, importance) made results easier for stakeholders to follow more than raw metrics.
 
 ---
 
